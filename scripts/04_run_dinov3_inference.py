@@ -142,9 +142,59 @@ def run_segmentation(cfg: Config, cache_dir: Path, device: str):
     print(f"   • Detected Existing Solar Coverage: {solar_mask.mean() * 100:.2f} %")
 
 
+def run_feature_extraction(cfg: Config, cache_dir: Path, device: str):
+    """Run DINOv3 feature extraction using available local checkpoints."""
+    print("\n" + "=" * 55)
+    print("🔬 Running DINOv3 Vision Foundation Feature Extraction")
+    print("=" * 55)
+
+    img = get_rgb_tile(cfg, cache_dir)
+    print(f"       Tile dimensions: {img.size[0]}x{img.size[1]} px")
+
+    candidate_models = [
+        "facebook/dinov3-vith16plus-pretrain-lvd1689m",
+        "facebook/dinov3-vits16-pretrain-lvd1689m",
+        cfg.DINOV3_SAT_HF_MODEL,
+    ]
+
+    from features.dinov3_features import DINOv3SATExtractor
+
+    extractor = DINOv3SATExtractor(device=device)
+    loaded_model = None
+
+    for m_name in candidate_models:
+        try:
+            print(f"       Checking model checkpoint: {m_name}...")
+            extractor.load_model(m_name, local_files_only=True)
+            loaded_model = m_name
+            break
+        except Exception:
+            continue
+
+    if loaded_model is None:
+        try:
+            extractor.load_model(candidate_models[0], local_files_only=False)
+            loaded_model = candidate_models[0]
+        except Exception as e:
+            print(f"⚠️ Could not load DINOv3 model: {e}")
+            return
+
+    print(f"       Extracting dense patch embeddings with {loaded_model} on {device}...")
+    feats = extractor.extract_features(img)
+    fpath = cache_dir / "dinov3_features.npy"
+    np.save(str(fpath), feats)
+    print(f"✅ Success! Dense DINOv3 feature tensor saved to {fpath}")
+    print(f"   • Spatial Grid: {feats.shape[0]}x{feats.shape[1]} patches")
+    print(f"   • Embedding Dimension: {feats.shape[2]} dims")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Run DINOv3 inference on GPU")
-    parser.add_argument("--mode", choices=["chmv2", "segmentation", "all"], default="all")
+    parser.add_argument(
+        "--mode",
+        choices=["chmv2", "segmentation", "features", "all"],
+        default="all",
+    )
     parser.add_argument("--device", default="cuda", help="Target device (cuda or cpu)")
     args = parser.parse_args()
 
@@ -159,6 +209,8 @@ def main():
         print(f"Device Name: {torch.cuda.get_device_name(0)}")
         print(f"Available VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
 
+    if args.mode in ("features", "all"):
+        run_feature_extraction(cfg, cache_dir, actual_device)
     if args.mode in ("chmv2", "all"):
         run_chmv2(cfg, cache_dir, actual_device)
     if args.mode in ("segmentation", "all"):
@@ -169,3 +221,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
