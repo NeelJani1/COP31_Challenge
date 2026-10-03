@@ -14,25 +14,6 @@ os.environ.setdefault("MKL_NUM_THREADS", "1")
 os.environ.setdefault("VECLIB_MAXIMUM_THREADS", "1")
 os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
 
-def _patch_cpython314_freelist():
-    """Bypass CPython 3.14 PyUnicodeWriter freelist race condition."""
-    if sys.version_info[:2] != (3, 14):
-        return
-    try:
-        import ctypes
-        pyapi = ctypes.PyDLL(None)
-        pyapi.PyThreadState_Get.restype = ctypes.c_void_p
-        tstate = pyapi.PyThreadState_Get()
-        if tstate:
-            interp = ctypes.c_void_p.from_address(tstate + 16).value
-            if interp:
-                ctypes.c_void_p.from_address(interp + 0x2d88).value = 0
-                ctypes.c_long.from_address(interp + 0x2d90).value = 1
-    except Exception:
-        pass
-
-_patch_cpython314_freelist()
-
 from pathlib import Path
 import streamlit as st
 import numpy as np
