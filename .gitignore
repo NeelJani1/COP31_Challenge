@@ -38,3 +38,4 @@ Thumbs.db
 cache/highres_rgb_tile.tif
 cache/*.tif
 cache/*.tiff
+cache/*.html

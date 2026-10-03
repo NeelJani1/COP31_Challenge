@@ -4,6 +4,9 @@ Run:
     streamlit run app.py
 """
 import os
+import sys
+
+# Stabilization for WSL & multi-threaded Streamlit execution
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
@@ -11,14 +14,33 @@ os.environ.setdefault("MKL_NUM_THREADS", "1")
 os.environ.setdefault("VECLIB_MAXIMUM_THREADS", "1")
 os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
 
+def _patch_cpython314_freelist():
+    """Bypass CPython 3.14 PyUnicodeWriter freelist race condition."""
+    if sys.version_info[:2] != (3, 14):
+        return
+    try:
+        import ctypes
+        pyapi = ctypes.PyDLL(None)
+        pyapi.PyThreadState_Get.restype = ctypes.c_void_p
+        tstate = pyapi.PyThreadState_Get()
+        if tstate:
+            interp = ctypes.c_void_p.from_address(tstate + 16).value
+            if interp:
+                ctypes.c_void_p.from_address(interp + 0x2d88).value = 0
+                ctypes.c_long.from_address(interp + 0x2d90).value = 1
+    except Exception:
+        pass
+
+_patch_cpython314_freelist()
+
 from pathlib import Path
 import streamlit as st
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")  # Headless backend — prevents segfault on thread reentry
+from matplotlib.figure import Figure
 import folium
 import branca.colormap as cm
-import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import io
 import base64
@@ -74,6 +96,7 @@ def get_api() -> HeatSolarAPI:
 
 
 def main():
+    _patch_cpython314_freelist()
     st.title("☀️ Sydney Urban Heat & Solar Forecaster")
     st.caption("Addressing COP31 Priorities: **Resilient Cities & Buildings** and **Electrification**")
 
@@ -211,7 +234,7 @@ def main():
                 # Map array to RGBA
                 render_arr = np.atleast_2d(np.squeeze(render_arr))
                 norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
-                cmap = plt.get_cmap(cmap_name)
+                cmap = matplotlib.colormaps[cmap_name]
                 rgba = cmap(norm(np.nan_to_num(render_arr, nan=vmin)))
                 rgba[..., 3] = np.where(np.isnan(render_arr), 0.0, heatmap_opacity)
 
@@ -264,10 +287,9 @@ def main():
                         tooltip=f"Roof: {b.get('roof_area_m2', 0):.0f} m² | Potential: {kw:.1f} kWp",
                     ).add_to(m)
 
-            # Save map to cache and embed cleanly using modern st.iframe
-            map_path = Path(api.cfg.CACHE_DIR) / "map_render.html"
-            m.save(str(map_path))
-            st.iframe(map_path, height=620)
+            # Render map directly in-memory without disk I/O
+            html_str = m.get_root().render()
+            st.iframe(html_str, height=620)
 
         with col_info:
             st.markdown("### 🔍 Live Site Intelligence")
@@ -286,7 +308,8 @@ def main():
         st.subheader("Temperature Distributions: Baseline vs Intervention")
         c1, c2 = st.columns(2)
         with c1:
-            fig, ax = plt.subplots(figsize=(6, 4))
+            fig = Figure(figsize=(6, 4))
+            ax = fig.subplots()
             b_valid = result.baseline_temp_map.flatten()
             p_valid = result.predicted_temp_map.flatten()
             ax.hist(b_valid[~np.isnan(b_valid)], bins=30, alpha=0.6, color="salmon", label="Baseline (Observed)")
@@ -296,7 +319,6 @@ def main():
             ax.legend()
             ax.set_title("Shift Toward Cooler Microclimate")
             st.pyplot(fig)
-            plt.close(fig)
 
         with c2:
             st.markdown("#### Key Takeaways for City Planners")

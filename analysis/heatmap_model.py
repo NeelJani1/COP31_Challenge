@@ -161,7 +161,16 @@ class MicroclimateModel:
         ndbi = np.clip(ndbi_base + delta_ndbi, -1, 1)
         albedo = np.clip(albedo_base + delta_albedo, 0, 1)
 
-        baseline = self.predict(ndvi_base, ndbi_base, albedo_base)
+        if (
+            getattr(self, "_cached_baseline", None) is not None
+            and getattr(self, "_cached_baseline_shape", None) == ndvi_base.shape
+        ):
+            baseline = self._cached_baseline
+        else:
+            baseline = self.predict(ndvi_base, ndbi_base, albedo_base)
+            self._cached_baseline = baseline
+            self._cached_baseline_shape = ndvi_base.shape
+
         predicted = self.predict(ndvi, ndbi, albedo)
 
         valid_diff = (baseline - predicted)[~np.isnan(baseline - predicted)]
