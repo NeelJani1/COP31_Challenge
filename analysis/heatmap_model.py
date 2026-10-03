@@ -30,6 +30,7 @@ class MicroclimateModel:
             subsample=0.8,
             colsample_bytree=0.8,
             random_state=42,
+            n_jobs=1,
         )
         self.feature_names = ["ndvi", "ndbi", "albedo"]
         self.is_fitted = False
@@ -182,6 +183,11 @@ class MicroclimateModel:
         if path is None:
             path = str(Path(self.cfg.CACHE_DIR) / "xgb_model.joblib")
         self.model = joblib.load(path)
+        if hasattr(self.model, "set_params"):
+            try:
+                self.model.set_params(n_jobs=1)
+            except Exception:
+                pass
         metrics_path = path.replace(".joblib", "_metrics.joblib")
         if Path(metrics_path).exists():
             self.metrics = joblib.load(metrics_path)

@@ -5,9 +5,14 @@ Run:
 """
 import os
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("VECLIB_MAXIMUM_THREADS", "1")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
 
+from pathlib import Path
 import streamlit as st
-import streamlit.components.v1 as components
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")  # Headless backend — prevents segfault on thread reentry
@@ -259,8 +264,10 @@ def main():
                         tooltip=f"Roof: {b.get('roof_area_m2', 0):.0f} m² | Potential: {kw:.1f} kWp",
                     ).add_to(m)
 
-            # Render map smoothly without triggering rerun cycles on scroll
-            components.html(m._repr_html_(), height=620)
+            # Save map to cache and embed cleanly using modern st.iframe
+            map_path = Path(api.cfg.CACHE_DIR) / "map_render.html"
+            m.save(str(map_path))
+            st.iframe(map_path, height=620)
 
         with col_info:
             st.markdown("### 🔍 Live Site Intelligence")
