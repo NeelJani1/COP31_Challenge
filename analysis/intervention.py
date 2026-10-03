@@ -44,7 +44,9 @@ class InterventionResult:
 
     @property
     def cooling_summary(self) -> str:
-        return f"-{self.avg_cooling_celsius:.1f}°C average"
+        if self.avg_cooling_celsius >= 0:
+            return f"-{self.avg_cooling_celsius:.1f}°C average"
+        return f"+{abs(self.avg_cooling_celsius):.1f}°C average"
 
     @property
     def solar_summary(self) -> str:
@@ -102,20 +104,33 @@ def run_intervention(
     hotspots_after = int(np.nansum(predicted_temp > hotspot_threshold))
 
     # Solar capacity calculation
-    solar_factor = solar_coverage_pct / 100
-    if "peak_kw" in buildings.columns:
+    solar_factor = float(np.clip(solar_coverage_pct / 100.0, 0.0, 1.0))
+    if buildings is None or len(buildings) == 0 or solar_factor <= 0.0:
+        total_kw = 0.0
+        total_kwh = 0.0
+        n_solar_buildings = 0
+        total_panels = 0
+    elif "peak_kw" in buildings.columns:
         total_kw = float(buildings["peak_kw"].sum() * solar_factor)
         total_kwh = float(buildings["annual_kwh"].sum() * solar_factor)
-        n_solar_buildings = int((buildings["n_panels"] > 0).sum())
-        total_panels = int(buildings["n_panels"].sum() * solar_factor)
-    else:
+        panels_per_bldg = (buildings["n_panels"] * solar_factor).astype(int)
+        total_panels = int(panels_per_bldg.sum())
+        n_solar_buildings = int((panels_per_bldg > 0).sum())
+    elif "roof_area_m2" in buildings.columns:
         # Fallback: estimate from roof area
         total_roof = float(buildings["roof_area_m2"].sum())
         usable = total_roof * 0.7 * solar_factor  # 70% usable
-        total_panels = int(usable / cfg.SOLAR_PANEL_AREA_M2)
+        usable_per_bldg = buildings["roof_area_m2"] * 0.7 * solar_factor
+        panels_per_bldg = (usable_per_bldg / cfg.SOLAR_PANEL_AREA_M2).astype(int)
+        total_panels = int(panels_per_bldg.sum())
         total_kw = total_panels * cfg.SOLAR_PANEL_WATT / 1000
         total_kwh = total_kw * cfg.SUN_HOURS_PER_DAY * 365
-        n_solar_buildings = len(buildings)
+        n_solar_buildings = int((panels_per_bldg > 0).sum())
+    else:
+        total_kw = 0.0
+        total_kwh = 0.0
+        n_solar_buildings = 0
+        total_panels = 0
 
     # Extract coordinate grids for map rendering
     lst = features["lst_celsius"]
@@ -130,13 +145,12 @@ def run_intervention(
         lat_grid = np.linspace(cfg.BBOX[3], cfg.BBOX[1], h)
         lon_grid = np.linspace(cfg.BBOX[0], cfg.BBOX[2], w)
 
-    max_cooling = float(
-        np.nanmax(baseline_temp - predicted_temp)
-    ) if not np.all(np.isnan(baseline_temp - predicted_temp)) else 0.0
+    valid_diff = (baseline_temp - predicted_temp)[~np.isnan(baseline_temp - predicted_temp)]
+    max_cooling = float(np.max(valid_diff)) if len(valid_diff) > 0 else 0.0
 
     return InterventionResult(
-        baseline_temp_map=np.squeeze(baseline_temp),
-        predicted_temp_map=np.squeeze(predicted_temp),
+        baseline_temp_map=np.atleast_2d(np.squeeze(baseline_temp)),
+        predicted_temp_map=np.atleast_2d(np.squeeze(predicted_temp)),
         avg_cooling_celsius=avg_cooling,
         max_cooling_celsius=max_cooling,
         hotspot_count_before=hotspots_before,

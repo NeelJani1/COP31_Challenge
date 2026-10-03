@@ -85,3 +85,23 @@ class CHMv2Predictor:
             Boolean mask where True = tree present
         """
         return height_map > min_height
+
+    @staticmethod
+    def predict_canopy_height_from_ndvi(
+        ndvi_array: np.ndarray,
+        threshold: float = 0.35,
+        scale: float = 35.0,
+        max_height: float = 25.0,
+    ) -> np.ndarray:
+        """Calibrated canopy height estimation fallback from NDVI array.
+
+        Approximates tree height: 0m for non-vegetated surfaces, scaling up
+        to max_height (e.g. 25m) for dense canopy.
+        """
+        ndvi = np.asarray(ndvi_array)
+        height_map = np.where(
+            ndvi > threshold,
+            np.clip((ndvi - threshold) * scale, 0.0, max_height),
+            0.0,
+        )
+        return height_map

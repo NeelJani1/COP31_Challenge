@@ -62,8 +62,11 @@ def compute_shadow_polygon(
     Returns:
         Shadow polygon (union of tree canopy and shadow projection)
     """
+    if tree_height <= 0.0 or tree_polygon is None or tree_polygon.is_empty:
+        return Polygon()
+
     if solar_altitude <= 2.0:
-        return tree_polygon  # No meaningful shadow near horizon
+        return tree_polygon  # Tree canopy itself when sun is near horizon
 
     shadow_length = tree_height / np.tan(np.radians(solar_altitude))
 
@@ -91,7 +94,7 @@ def compute_daily_shadow_union(
     all_shadows = []
     for _, sun_pos in solar_positions.iterrows():
         for tree_poly, height in zip(tree_polygons, tree_heights):
-            if tree_poly is None or tree_poly.is_empty:
+            if tree_poly is None or tree_poly.is_empty or height <= 0.0:
                 continue
             try:
                 shadow = compute_shadow_polygon(
@@ -130,29 +133,59 @@ def compute_unshaded_roof_area(
         - peak_kw: Peak generation capacity in kW
         - annual_kwh: Estimated annual energy production
     """
+    if buildings is None or len(buildings) == 0:
+        empty = gpd.GeoDataFrame(
+            columns=[
+                "building",
+                "roof_area_m2",
+                "unshaded_area_m2",
+                "n_panels",
+                "peak_kw",
+                "annual_kwh",
+                "geometry",
+            ],
+            crs=cfg.CRS_WGS84,
+        )
+        return empty
+
     solar_pos = get_solar_positions(cfg)
 
     # Work in UTM for accurate area calculations
     buildings_utm = buildings.to_crs(cfg.CRS_UTM)
-    trees_utm = tree_canopy.to_crs(cfg.CRS_UTM)
 
-    # Compute daily shadow union
-    shadow_union = compute_daily_shadow_union(
-        trees_utm.geometry, tree_heights, solar_pos
-    )
+    if tree_canopy is not None and len(tree_canopy) > 0 and tree_heights is not None:
+        if isinstance(tree_heights, (int, float)):
+            heights_arr = np.full(len(tree_canopy), float(tree_heights))
+        else:
+            heights_arr = np.asarray(tree_heights, dtype=float)
+            if heights_arr.ndim == 0:
+                heights_arr = np.full(len(tree_canopy), float(heights_arr))
+        if len(heights_arr) > 0:
+            trees_utm = tree_canopy.to_crs(cfg.CRS_UTM)
+            shadow_union = compute_daily_shadow_union(
+                trees_utm.geometry, heights_arr, solar_pos
+            )
+        else:
+            shadow_union = Polygon()
+    else:
+        shadow_union = Polygon()
 
     # Subtract shadows from building footprints
     results = buildings_utm.copy()
     if not shadow_union.is_empty:
-        results["unshaded_geometry"] = results.geometry.difference(shadow_union)
-        results["unshaded_area_m2"] = results["unshaded_geometry"].area
+        unshaded_geom = results.geometry.difference(shadow_union)
+        results["unshaded_area_m2"] = unshaded_geom.area.fillna(0.0).clip(lower=0.0)
     else:
-        results["unshaded_area_m2"] = results.geometry.area
+        results["unshaded_area_m2"] = results.geometry.area.fillna(0.0).clip(lower=0.0)
+
+    # Ensure unshaded area does not exceed total roof area if present
+    if "roof_area_m2" in results.columns:
+        results["unshaded_area_m2"] = results[["unshaded_area_m2", "roof_area_m2"]].min(axis=1)
 
     # Calculate solar capacity
     results["n_panels"] = (
         results["unshaded_area_m2"] / cfg.SOLAR_PANEL_AREA_M2
-    ).astype(int)
+    ).astype(int).clip(lower=0)
     results["peak_kw"] = results["n_panels"] * cfg.SOLAR_PANEL_WATT / 1000
     results["annual_kwh"] = (
         results["peak_kw"] * cfg.SUN_HOURS_PER_DAY * 365
@@ -181,16 +214,37 @@ def compute_simple_solar_capacity(
     Returns:
         buildings with solar capacity columns added
     """
+    if buildings is None or len(buildings) == 0:
+        return gpd.GeoDataFrame(
+            columns=[
+                "building",
+                "roof_area_m2",
+                "unshaded_area_m2",
+                "n_panels",
+                "peak_kw",
+                "annual_kwh",
+                "geometry",
+            ],
+            crs=cfg.CRS_WGS84,
+        )
+
     results = buildings.copy()
+
+    # Ensure roof_area_m2 exists
+    if "roof_area_m2" not in results.columns:
+        results_utm = results.to_crs(cfg.CRS_UTM)
+        results["roof_area_m2"] = results_utm.geometry.area.fillna(0.0)
 
     # Estimate shading fraction from NDVI (higher NDVI near building = more shade)
     # Simple heuristic: assume 30% of roof is shaded on average
     shade_fraction = 0.30
-    results["unshaded_area_m2"] = results["roof_area_m2"] * (1 - shade_fraction)
+    results["unshaded_area_m2"] = (
+        results["roof_area_m2"] * (1 - shade_fraction)
+    ).clip(lower=0.0)
 
     results["n_panels"] = (
         results["unshaded_area_m2"] / cfg.SOLAR_PANEL_AREA_M2
-    ).astype(int)
+    ).astype(int).clip(lower=0)
     results["peak_kw"] = results["n_panels"] * cfg.SOLAR_PANEL_WATT / 1000
     results["annual_kwh"] = (
         results["peak_kw"] * cfg.SUN_HOURS_PER_DAY * 365

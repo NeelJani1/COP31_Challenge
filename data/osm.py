@@ -6,6 +6,7 @@ areas in square meters using UTM projection.
 import geopandas as gpd
 import osmnx as ox
 import pandas as pd
+import numpy as np
 from pathlib import Path
 
 import sys
@@ -66,23 +67,86 @@ def load_buildings(cfg: Config) -> gpd.GeoDataFrame:
     return buildings
 
 
+def create_synthetic_buildings(cfg: Config) -> gpd.GeoDataFrame:
+    """Generate realistic synthetic building footprints across the target area."""
+    from shapely.geometry import box
+
+    rng = np.random.RandomState(101)
+    min_lon, min_lat, max_lon, max_lat = cfg.BBOX
+
+    polys = []
+    heights = []
+    btypes = []
+
+    # Create grid of simulated parcels
+    step_x = 0.0018  # ~160m
+    step_y = 0.0015  # ~160m
+
+    for lon in np.arange(min_lon + 0.002, max_lon - 0.002, step_x):
+        for lat in np.arange(min_lat + 0.002, max_lat - 0.002, step_y):
+            dist_cbd = np.sqrt((lon - cfg.LONGITUDE)**2 + (lat - cfg.LATITUDE)**2)
+
+            if dist_cbd < 0.008:
+                dx = rng.uniform(0.0006, 0.0012)
+                dy = rng.uniform(0.0005, 0.0010)
+                h = rng.uniform(18.0, 55.0)
+                btype = "commercial"
+            else:
+                dx = rng.uniform(0.0003, 0.0007)
+                dy = rng.uniform(0.0003, 0.0006)
+                h = rng.uniform(5.5, 9.0)
+                btype = "residential"
+
+            p_box = box(lon, lat, lon + dx, lat + dy)
+            polys.append(p_box)
+            heights.append(round(float(h), 1))
+            btypes.append(btype)
+
+    gdf = gpd.GeoDataFrame(
+        {
+            "building": btypes,
+            "height_m": heights,
+            "geometry": polys,
+        },
+        crs=cfg.CRS_WGS84,
+    )
+
+    gdf_utm = gdf.to_crs(cfg.CRS_UTM)
+    gdf["roof_area_m2"] = gdf_utm.geometry.area.round(1)
+    gdf = gdf[gdf["roof_area_m2"] >= 35].reset_index(drop=True)
+    return gdf
+
+
 def cache_buildings(cfg: Config, buildings: gpd.GeoDataFrame) -> Path:
     """Cache building footprints as GeoJSON."""
     cache_path = Path(cfg.CACHE_DIR)
     cache_path.mkdir(parents=True, exist_ok=True)
     fpath = cache_path / "buildings.geojson"
     # Keep only serializable columns
-    cols_to_keep = ["geometry", "roof_area_m2", "height_m", "building"]
+    cols_to_keep = [
+        "geometry",
+        "roof_area_m2",
+        "height_m",
+        "building",
+        "unshaded_area_m2",
+        "peak_kw",
+        "annual_kwh",
+        "n_panels",
+    ]
     cols_present = [c for c in cols_to_keep if c in buildings.columns]
     buildings[cols_present].to_file(str(fpath), driver="GeoJSON")
     return fpath
 
 
-def load_cached_buildings(cfg: Config) -> gpd.GeoDataFrame:
-    """Load cached building footprints."""
+def load_cached_buildings(cfg: Config, allow_mock: bool = False) -> gpd.GeoDataFrame:
+    """Load cached building footprints, optionally falling back to synthetic."""
     fpath = Path(cfg.CACHE_DIR) / "buildings.geojson"
     if fpath.exists():
         return gpd.read_file(str(fpath))
+    if allow_mock:
+        bldgs = create_synthetic_buildings(cfg)
+        cache_buildings(cfg, bldgs)
+        return bldgs
     raise FileNotFoundError(
         f"No cached buildings at {fpath}. Run 01_download_data.py first."
     )

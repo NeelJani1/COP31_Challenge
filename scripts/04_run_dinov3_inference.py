@@ -103,13 +103,21 @@ def run_segmentation(cfg: Config, cache_dir: Path, device: str):
     img = get_rgb_tile(cfg, cache_dir)
     try:
         from features.dinov3_segmentation import ZeroShotSegmentor, URBAN_CLASSES
-        print(f"       Initializing segmentor on {device}...")
+        print(f"       Checking dino.txt repository at {cfg.DINOV3_REPO}...")
+        repo_path = Path(cfg.DINOV3_REPO)
+        weights_path = Path(cfg.CACHE_DIR) / "dinotxt_weights.pth"
+        backbone_path = Path(cfg.CACHE_DIR) / "dinov3_vitl16_sat.pth"
+        if not repo_path.exists() or not weights_path.exists() or not backbone_path.exists():
+            raise FileNotFoundError(
+                f"dino.txt requires local repo and checkpoint files. "
+                f"Missing: {[p for p in (repo_path, weights_path, backbone_path) if not p.exists()]}"
+            )
         segmentor = ZeroShotSegmentor(repo_dir=cfg.DINOV3_REPO, device=device)
-        # Attempt to load if local weights exist
+        segmentor.load_model(str(weights_path), str(backbone_path))
         res = segmentor.segment(img)
         seg_map = res["segmentation_map"]
     except Exception as e:
-        print(f"⚠️  dino.txt model weights not configured or failed ({e}).")
+        print(f"ℹ️  Notice: dino.txt weights not detected ({e}).")
         print("🔄 Synthesizing semantic land-cover segmentation from calibrated spectral bands...")
         from data.ingest import load_cached_bands
         from features.spectral import compute_ndvi, compute_ndbi

@@ -46,13 +46,23 @@ class MicroclimateModel:
         Returns:
             (X features DataFrame, y temperature Series)
         """
+        for req in self.feature_names + ["lst_celsius"]:
+            if req not in features:
+                raise KeyError(f"Missing required feature '{req}' in features dict")
+
         data = {}
         for name in self.feature_names:
-            arr = features[name].values.flatten()
+            arr = features[name].values.flatten() if hasattr(features[name], "values") else np.asarray(features[name]).flatten()
             data[name] = arr
-        data["lst_celsius"] = features["lst_celsius"].values.flatten()
+        lst_arr = features["lst_celsius"].values.flatten() if hasattr(features["lst_celsius"], "values") else np.asarray(features["lst_celsius"]).flatten()
+        data["lst_celsius"] = lst_arr
 
         df = pd.DataFrame(data).dropna()
+        if len(df) < 10:
+            raise ValueError(
+                f"Insufficient valid training samples ({len(df)}). "
+                "Ensure satellite data contains at least 10 non-NaN pixels."
+            )
 
         X = df[self.feature_names]
         y = df["lst_celsius"]
@@ -66,8 +76,9 @@ class MicroclimateModel:
         """
         X, y = self.prepare_training_data(features)
 
+        test_size = 0.2 if len(X) >= 50 else 0.1
         X_train, X_val, y_train, y_val = train_test_split(
-            X, y, test_size=0.2, random_state=42
+            X, y, test_size=test_size, random_state=42
         )
 
         self.model.fit(X_train, y_train)
@@ -95,14 +106,23 @@ class MicroclimateModel:
         temperature in Celsius with the same shape.
         """
         if not self.is_fitted:
-            raise RuntimeError("Model not trained. Call train() first.")
+            raise RuntimeError("Model not trained. Call train() or load() first.")
 
-        shape = ndvi.shape
+        ndvi_arr = np.asarray(ndvi)
+        ndbi_arr = np.asarray(ndbi)
+        albedo_arr = np.asarray(albedo)
+
+        if not (ndvi_arr.shape == ndbi_arr.shape == albedo_arr.shape):
+            raise ValueError(
+                f"Shape mismatch: ndvi {ndvi_arr.shape}, ndbi {ndbi_arr.shape}, albedo {albedo_arr.shape}"
+            )
+
+        shape = ndvi_arr.shape
         X = pd.DataFrame(
             {
-                "ndvi": ndvi.flatten(),
-                "ndbi": ndbi.flatten(),
-                "albedo": albedo.flatten(),
+                "ndvi": ndvi_arr.flatten(),
+                "ndbi": ndbi_arr.flatten(),
+                "albedo": albedo_arr.flatten(),
             }
         )
 
@@ -132,23 +152,19 @@ class MicroclimateModel:
         Returns:
             (baseline_temp, predicted_temp, avg_cooling_celsius)
         """
-        ndvi = features["ndvi"].values + delta_ndvi
-        ndbi = features["ndbi"].values + delta_ndbi
-        albedo = features["albedo"].values + delta_albedo
+        ndvi_base = features["ndvi"].values if hasattr(features["ndvi"], "values") else np.asarray(features["ndvi"])
+        ndbi_base = features["ndbi"].values if hasattr(features["ndbi"], "values") else np.asarray(features["ndbi"])
+        albedo_base = features["albedo"].values if hasattr(features["albedo"], "values") else np.asarray(features["albedo"])
 
-        # Clip to valid ranges
-        ndvi = np.clip(ndvi, -1, 1)
-        ndbi = np.clip(ndbi, -1, 1)
-        albedo = np.clip(albedo, 0, 1)
+        ndvi = np.clip(ndvi_base + delta_ndvi, -1, 1)
+        ndbi = np.clip(ndbi_base + delta_ndbi, -1, 1)
+        albedo = np.clip(albedo_base + delta_albedo, 0, 1)
 
-        baseline = self.predict(
-            features["ndvi"].values,
-            features["ndbi"].values,
-            features["albedo"].values,
-        )
+        baseline = self.predict(ndvi_base, ndbi_base, albedo_base)
         predicted = self.predict(ndvi, ndbi, albedo)
 
-        avg_cooling = float(np.nanmean(baseline) - np.nanmean(predicted))
+        valid_diff = (baseline - predicted)[~np.isnan(baseline - predicted)]
+        avg_cooling = float(np.mean(valid_diff)) if len(valid_diff) > 0 else 0.0
         return baseline, predicted, avg_cooling
 
     def save(self, path: str | None = None):

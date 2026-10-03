@@ -1,5 +1,10 @@
 """Central configuration for Sydney Urban Heat & Solar Forecaster."""
+import os
 from dataclasses import dataclass, field
+
+# Ensure matplotlib uses writable tmp directory
+os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
+
 
 
 @dataclass

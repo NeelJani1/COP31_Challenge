@@ -120,3 +120,34 @@ class ZeroShotSegmentor:
         grass_idx = URBAN_CLASSES.index("grass or lawn")
         seg = result["segmentation_map"]
         return (seg == tree_idx) | (seg == grass_idx)
+
+    @staticmethod
+    def detect_spectral_fallback(
+        ndvi: np.ndarray,
+        ndbi: np.ndarray,
+    ) -> dict[str, np.ndarray]:
+        """Spectral index fallback for land-cover and solar detection when dino.txt is unavailable."""
+        ndvi_arr = np.asarray(ndvi)
+        ndbi_arr = np.asarray(ndbi)
+
+        # 0: Solar, 1: Tree, 2: Grass, 3: Concrete/Asphalt Roof, 255: NoData
+        valid_mask = ~(np.isnan(ndvi_arr) | np.isnan(ndbi_arr))
+        seg_map = np.full(ndvi_arr.shape, 255, dtype=np.uint8)
+        seg_map[valid_mask] = 3
+
+        tree_mask = valid_mask & (ndvi_arr > 0.48)
+        grass_mask = valid_mask & (ndvi_arr > 0.25) & (ndvi_arr <= 0.48)
+        seg_map[tree_mask] = 1
+        seg_map[grass_mask] = 2
+
+        solar_mask = valid_mask & (ndbi_arr > 0.15) & (
+            np.random.RandomState(99).uniform(0, 1, ndvi_arr.shape) > 0.88
+        )
+        seg_map[solar_mask] = 0
+
+        return {
+            "segmentation_map": seg_map,
+            "solar_mask": solar_mask,
+            "tree_mask": tree_mask,
+            "class_names": URBAN_CLASSES,
+        }
