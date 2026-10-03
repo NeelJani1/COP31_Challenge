@@ -77,7 +77,6 @@ def get_api() -> HeatSolarAPI:
 
 
 def main():
-    _patch_cpython314_freelist()
     st.title("☀️ Sydney Urban Heat & Solar Forecaster")
     st.caption("Addressing COP31 Priorities: **Resilient Cities & Buildings** and **Electrification**")
 
