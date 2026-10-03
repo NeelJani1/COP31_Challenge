@@ -3,11 +3,15 @@
 Run:
     streamlit run app.py
 """
+import os
+os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
+
 import streamlit as st
 import streamlit.components.v1 as components
 import numpy as np
+import matplotlib
+matplotlib.use("Agg")  # Headless backend — prevents segfault on thread reentry
 import folium
-from folium.plugins import HeatMap
 import branca.colormap as cm
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
@@ -200,6 +204,7 @@ def main():
                     legend_caption = "Cooling Impact (°C Drop)"
 
                 # Map array to RGBA
+                render_arr = np.atleast_2d(np.squeeze(render_arr))
                 norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
                 cmap = plt.get_cmap(cmap_name)
                 rgba = cmap(norm(np.nan_to_num(render_arr, nan=vmin)))
@@ -245,8 +250,8 @@ def main():
                     kw = b.get("peak_kw", 0) * (solar_target / 100.0)
                     folium.GeoJson(
                         b.geometry.__geo_interface__,
-                        style_function=lambda x: {
-                            "fillColor": "#00e5ff" if kw > 5 else "#ff9100",
+                        style_function=lambda x, _kw=kw: {
+                            "fillColor": "#00e5ff" if _kw > 5 else "#ff9100",
                             "color": "#ffffff",
                             "weight": 0.8,
                             "fillOpacity": 0.5,
