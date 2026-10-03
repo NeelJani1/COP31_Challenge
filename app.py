@@ -91,6 +91,12 @@ def main():
 
         st.markdown("---")
         st.subheader("🗺️ Map Overlays")
+        basemap_style = st.selectbox(
+            "Basemap Style",
+            ["Satellite (Esri World Imagery)", "OpenStreetMap (Standard)", "CartoDB Positron"],
+            index=0,
+            help="Choose basemap tile provider. Satellite and OpenStreetMap require no API key.",
+        )
         show_heatmap = st.checkbox("Show Microclimate Heatmap", value=True)
         heatmap_mode = st.radio("Heatmap View", ["After Intervention", "Baseline (Observed)", "Cooling Difference (Delta)"], index=0)
         show_buildings = st.checkbox("Show Building Vectors", value=False)
@@ -150,12 +156,29 @@ def main():
         with col_map:
             # Center of map
             center_lat, center_lon = api.cfg.LATITUDE, api.cfg.LONGITUDE
-            m = folium.Map(
-                location=[center_lat, center_lon],
-                zoom_start=15,
-                tiles="CartoDB dark_matter",
-                control_scale=True,
-            )
+
+            if basemap_style == "Satellite (Esri World Imagery)":
+                m = folium.Map(
+                    location=[center_lat, center_lon],
+                    zoom_start=14,
+                    tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+                    attr="Esri World Imagery",
+                    control_scale=True,
+                )
+            elif basemap_style == "CartoDB Positron":
+                m = folium.Map(
+                    location=[center_lat, center_lon],
+                    zoom_start=14,
+                    tiles="CartoDB positron",
+                    control_scale=True,
+                )
+            else:
+                m = folium.Map(
+                    location=[center_lat, center_lon],
+                    zoom_start=14,
+                    tiles="OpenStreetMap",
+                    control_scale=True,
+                )
 
             # Render Raster Temperature Overlay
             if show_heatmap:
@@ -200,6 +223,9 @@ def main():
                     name="Temperature Heatmap",
                     interactive=True,
                 ).add_to(m)
+
+                # Automatically frame the heatmap bounds
+                m.fit_bounds(bounds)
 
                 # Legend
                 colormap = cm.LinearColormap(
