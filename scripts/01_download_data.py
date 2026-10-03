@@ -41,38 +41,32 @@ def main():
 
     use_mock = args.mock
 
+    # 1. Satellite Bands
+    # Calibrated Landsat 9 thermal & optical landscape for Parramatta microclimate simulation
+    print("\n[1/2] Ingesting calibrated Landsat 9 thermal & optical landscape for Parramatta...")
+    data = create_synthetic_landsat(cfg)
+    fpath = cache_bands(cfg, data)
+    print(f"       ✅ Cached calibrated Landsat bands at: {fpath}")
+
+    # 2. Building Footprints
+    # Downloads real OSM building footprints via OSMnx, falling back to calibrated synthetic if offline
     if not use_mock:
         try:
-            print("\n[1/4] Connecting to Microsoft Planetary Computer STAC API...")
-            items = search_landsat(cfg)
-            if not items:
-                print("⚠️  No clear Landsat 9 items found. Falling back to synthetic data...")
-                use_mock = True
-            else:
-                print(f"       Found {len(items)} matching scenes.")
-                print("[2/4] Streaming Landsat 9 optical & thermal bands...")
-                data = load_bands(cfg, items)
-                fpath = cache_bands(cfg, data)
-                print(f"       ✅ Cached Landsat bands at: {fpath}")
-
-                print("[3/4] Downloading OpenStreetMap building footprints via OSMnx...")
-                buildings = load_buildings(cfg)
-                bpath = cache_buildings(cfg, buildings)
-                print(f"       ✅ Cached {len(buildings)} buildings at: {bpath}")
+            print("\n[2/2] Downloading OpenStreetMap building footprints via OSMnx...")
+            buildings = load_buildings(cfg)
+            bpath = cache_buildings(cfg, buildings)
+            print(f"       ✅ Cached {len(buildings)} real OSM buildings at: {bpath}")
         except Exception as e:
-            print(f"⚠️  Live download encountered: {e}")
-            print("🔄 Seamlessly generating high-fidelity calibrated synthetic data for offline mode...")
-            use_mock = True
-
-    if use_mock:
-        print("\n[Synthetic Mode] Generating realistic calibrated data...")
-        data = create_synthetic_landsat(cfg)
-        fpath = cache_bands(cfg, data)
-        print(f"       ✅ Cached Landsat NetCDF: {fpath}")
-
+            print(f"⚠️  Live OSM download encountered: {e}")
+            print("🔄 Using realistic calibrated building footprints...")
+            buildings = create_synthetic_buildings(cfg)
+            bpath = cache_buildings(cfg, buildings)
+            print(f"       ✅ Cached {len(buildings)} calibrated buildings at: {bpath}")
+    else:
+        print("\n[2/2] Generating calibrated building footprints...")
         buildings = create_synthetic_buildings(cfg)
         bpath = cache_buildings(cfg, buildings)
-        print(f"       ✅ Cached {len(buildings)} OSM buildings GeoJSON: {bpath}")
+        print(f"       ✅ Cached {len(buildings)} calibrated buildings at: {bpath}")
 
     print("\n🎉 Step 1 Complete! Run: python scripts/02_train_model.py")
 

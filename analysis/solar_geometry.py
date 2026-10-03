@@ -112,6 +112,27 @@ def compute_daily_shadow_union(
     return Polygon()  # No shadows
 
 
+def _get_australian_solar_cap(b_type: str, roof_area: float = 0.0, height: float = 7.0) -> float:
+    """Return Australian inverter / grid connection cap (kWp) by building typology."""
+    b = str(b_type).lower().strip()
+    if b in ("residential", "house", "home", "detached", "terrace", "semidetached_house", "cottage", "cabin", "bungalow", "duplex"):
+        return 15.0
+    if b in ("apartments", "dormitory", "barracks"):
+        return 48.0
+    if b in ("industrial", "warehouse", "manufacture", "depot"):
+        return 250.0
+    if b in ("commercial", "office", "retail", "hotel", "bank", "supermarket", "kiosk", "skyscraper", "school", "university", "college", "hospital", "clinic", "civic", "public", "government", "library", "church"):
+        return 200.0
+    # Infer for generic "yes" or unspecified tags
+    if height > 24.0 or roof_area > 1800.0:
+        return 200.0
+    if height > 11.0 or roof_area > 450.0:
+        return 48.0
+    if roof_area > 0 and roof_area <= 380.0:
+        return 15.0
+    return 15.0
+
+
 def compute_unshaded_roof_area(
     buildings: gpd.GeoDataFrame,
     tree_canopy: gpd.GeoDataFrame,
@@ -182,14 +203,32 @@ def compute_unshaded_roof_area(
     if "roof_area_m2" in results.columns:
         results["unshaded_area_m2"] = results[["unshaded_area_m2", "roof_area_m2"]].min(axis=1)
 
-    # Calculate solar capacity
-    results["n_panels"] = (
+    # Calculate solar capacity with realistic Australian connection and installation limits
+    raw_panels = (
         results["unshaded_area_m2"] / cfg.SOLAR_PANEL_AREA_M2
     ).astype(int).clip(lower=0)
-    results["peak_kw"] = results["n_panels"] * cfg.SOLAR_PANEL_WATT / 1000
+    raw_kw = raw_panels * cfg.SOLAR_PANEL_WATT / 1000.0
+
+    if "building" in results.columns:
+        caps = results.apply(
+            lambda r: _get_australian_solar_cap(
+                r.get("building", ""),
+                r.get("roof_area_m2", 0.0),
+                r.get("height_m", 7.0),
+            ),
+            axis=1,
+        )
+        peak_kw = np.minimum(raw_kw, caps)
+        n_panels = (peak_kw * 1000.0 / cfg.SOLAR_PANEL_WATT).astype(int)
+    else:
+        peak_kw = raw_kw
+        n_panels = raw_panels
+
+    results["n_panels"] = n_panels
+    results["peak_kw"] = peak_kw.round(1) if hasattr(peak_kw, "round") else np.round(peak_kw, 1)
     results["annual_kwh"] = (
         results["peak_kw"] * cfg.SUN_HOURS_PER_DAY * 365
-    )
+    ).round(0)
 
     # Convert back to WGS84 for mapping
     results = results.to_crs(cfg.CRS_WGS84)
@@ -242,12 +281,30 @@ def compute_simple_solar_capacity(
         results["roof_area_m2"] * (1 - shade_fraction)
     ).clip(lower=0.0)
 
-    results["n_panels"] = (
+    raw_panels = (
         results["unshaded_area_m2"] / cfg.SOLAR_PANEL_AREA_M2
     ).astype(int).clip(lower=0)
-    results["peak_kw"] = results["n_panels"] * cfg.SOLAR_PANEL_WATT / 1000
+    raw_kw = raw_panels * cfg.SOLAR_PANEL_WATT / 1000.0
+
+    if "building" in results.columns:
+        caps = results.apply(
+            lambda r: _get_australian_solar_cap(
+                r.get("building", ""),
+                r.get("roof_area_m2", 0.0),
+                r.get("height_m", 7.0),
+            ),
+            axis=1,
+        )
+        peak_kw = np.minimum(raw_kw, caps)
+        n_panels = (peak_kw * 1000.0 / cfg.SOLAR_PANEL_WATT).astype(int)
+    else:
+        peak_kw = raw_kw
+        n_panels = raw_panels
+
+    results["n_panels"] = n_panels
+    results["peak_kw"] = peak_kw.round(1) if hasattr(peak_kw, "round") else np.round(peak_kw, 1)
     results["annual_kwh"] = (
         results["peak_kw"] * cfg.SUN_HOURS_PER_DAY * 365
-    )
+    ).round(0)
 
     return results

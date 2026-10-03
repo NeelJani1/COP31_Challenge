@@ -84,11 +84,30 @@ def run_intervention(
     Returns:
         InterventionResult with all metrics and map data
     """
-    # Convert percentage to NDVI/NDBI deltas
-    # Empirical mapping: 20% more trees approx +0.15 NDVI, -0.08 NDBI
-    delta_ndvi = (tree_canopy_increase_pct / 100) * 0.75
-    delta_ndbi = -(tree_canopy_increase_pct / 100) * 0.40
-    delta_albedo = cool_roof_albedo_increase
+    # Localized intervention physics:
+    # Urban greening cools streets and corridors where trees are actually planted,
+    # avoiding water bodies (Parramatta River) and areas with already mature dense canopy.
+    ndvi_base = features["ndvi"].values if hasattr(features["ndvi"], "values") else np.asarray(features["ndvi"])
+    ndbi_base = features["ndbi"].values if hasattr(features["ndbi"], "values") else np.asarray(features["ndbi"])
+
+    # Water identification: NDVI < 0.05 & NDBI < -0.15 (do not plant trees in the river)
+    is_water = (ndvi_base < 0.05) & (ndbi_base < -0.15)
+    # Mature forest / dense existing canopy: limited headroom to add more trees
+    mature_forest = np.clip((ndvi_base - 0.50) / 0.25, 0.0, 1.0)
+    # Tree planting suitability (0.0 to 1.0):
+    # Maximum along residential streets, asphalt heat corridors, and road verges
+    tree_suitability = np.clip(1.0 - mature_forest, 0.0, 1.0) * (~is_water).astype(float)
+
+    # Cool roof suitability: targets built-up impervious surfaces (high NDBI), zero on water
+    built_suitability = np.clip((ndbi_base + 0.10) / 0.40, 0.0, 1.0) * (~is_water).astype(float)
+    cool_roof_suitability = built_suitability * (~is_water).astype(float)
+
+    # Convert percentage to localized NDVI/NDBI deltas
+    delta_ndvi = (tree_canopy_increase_pct / 100.0) * 0.70 * tree_suitability
+    delta_ndbi_tree = -(tree_canopy_increase_pct / 100.0) * 0.35 * tree_suitability
+    delta_ndbi_cool = -0.15 * cool_roof_albedo_increase * cool_roof_suitability
+    delta_ndbi = delta_ndbi_tree + delta_ndbi_cool
+    delta_albedo = cool_roof_albedo_increase * cool_roof_suitability
 
     # Run temperature simulation
     baseline_temp, predicted_temp, avg_cooling = model.simulate_intervention(

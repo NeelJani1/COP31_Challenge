@@ -17,6 +17,7 @@ os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
 from pathlib import Path
 import streamlit as st
 import numpy as np
+import pandas as pd
 import matplotlib
 matplotlib.use("Agg")  # Headless backend — prevents segfault on thread reentry
 from matplotlib.figure import Figure
@@ -251,21 +252,39 @@ def main():
                 colormap.add_to(m)
 
             # Optional Building Polygons
-            if show_buildings and api.buildings is not None:
-                # Add simplified polygons for performance
-                sample_bldgs = api.buildings.iloc[:120]  # sample top 120 for smooth rendering
-                for _, b in sample_bldgs.iterrows():
-                    kw = b.get("peak_kw", 0) * (solar_target / 100.0)
-                    folium.GeoJson(
-                        b.geometry.__geo_interface__,
-                        style_function=lambda x, _kw=kw: {
-                            "fillColor": "#00e5ff" if _kw > 5 else "#ff9100",
-                            "color": "#ffffff",
-                            "weight": 0.8,
-                            "fillOpacity": 0.5,
-                        },
-                        tooltip=f"Roof: {b.get('roof_area_m2', 0):.0f} m² | Potential: {kw:.1f} kWp",
-                    ).add_to(m)
+            if show_buildings and api.buildings is not None and not api.buildings.empty:
+                # Include landmark commercial/industrial high-capacity roofs plus a stratified sample of residential
+                # to render smoothly across all sectors of Parramatta without crowding
+                commercial_bldgs = api.buildings[api.buildings["building"].isin(["commercial", "office", "industrial", "apartments"])]
+                residential_bldgs = api.buildings[api.buildings["building"] == "residential"]
+
+                n_res_sample = min(400, len(residential_bldgs))
+                res_sample = residential_bldgs.sample(n=n_res_sample, random_state=42) if len(residential_bldgs) > 0 else residential_bldgs
+
+                display_bldgs = pd.concat([commercial_bldgs, res_sample]).drop_duplicates().copy()
+                if len(display_bldgs) > 600:
+                    display_bldgs = display_bldgs.sample(n=600, random_state=42)
+
+                solar_factor = float(solar_target / 100.0)
+                display_bldgs["scaled_kw"] = (display_bldgs.get("peak_kw", 0) * solar_factor).round(1)
+                display_bldgs["btype_label"] = display_bldgs.get("building", "Building").astype(str).str.title()
+
+                folium.GeoJson(
+                    display_bldgs[["geometry", "btype_label", "roof_area_m2", "height_m", "scaled_kw"]],
+                    style_function=lambda feature: {
+                        "fillColor": "#00e5ff" if feature["properties"]["scaled_kw"] > 15.0
+                        else ("#ffb300" if feature["properties"]["scaled_kw"] > 5.0 else "#76ff03"),
+                        "color": "#ffffff",
+                        "weight": 0.8,
+                        "fillOpacity": 0.55,
+                    },
+                    tooltip=folium.GeoJsonTooltip(
+                        fields=["btype_label", "roof_area_m2", "height_m", "scaled_kw"],
+                        aliases=["Building Type:", "Roof Area (m²):", "Height (m):", f"Active Solar Capacity ({solar_target}%):"],
+                        localize=True,
+                    ),
+                    name="Building Rooftops & Solar Vectors",
+                ).add_to(m)
 
             # Render map directly in-memory without disk I/O
             html_str = m.get_root().render()

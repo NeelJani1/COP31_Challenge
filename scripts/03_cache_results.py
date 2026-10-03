@@ -31,7 +31,7 @@ def main():
     np.save(str(cache_path / "heatmap_baseline.npy"), baseline_temp)
     print(f"       ✅ Heatmap size: {baseline_temp.shape}, Mean Temp: {np.nanmean(baseline_temp):.1f}°C")
 
-    print("\n[3/4] Caching building solar capacities...")
+    print("\n[3/4] Caching building solar capacities & AI canopy masks...")
     solar_df = pd.DataFrame({
         "roof_area_m2": api.buildings["roof_area_m2"],
         "unshaded_area_m2": api.buildings["unshaded_area_m2"],
@@ -44,6 +44,22 @@ def main():
     print(f"       ✅ Solar summary for {len(solar_df)} buildings saved to {solar_csv_path}")
     print(f"       • Total Potential Peak Capacity: {solar_df['peak_kw'].sum() / 1000:.2f} MW")
     print(f"       • Total Potential Clean Generation: {solar_df['annual_kwh'].sum() / 1e6:.2f} GWh/year")
+
+    # Cache aligned AI canopy heights & segmentation masks
+    from features.chmv2_canopy import CHMv2Predictor
+    from features.dinov3_segmentation import ZeroShotSegmentor
+
+    canopy_heights = CHMv2Predictor.predict_canopy_height_from_ndvi(api.features["ndvi"].values.squeeze())
+    tree_mask = canopy_heights > 3.0
+    seg_res = ZeroShotSegmentor.detect_spectral_fallback(
+        api.features["ndvi"].values.squeeze(),
+        api.features["ndbi"].values.squeeze(),
+    )
+    np.save(str(cache_path / "canopy_heights.npy"), canopy_heights)
+    np.save(str(cache_path / "tree_mask.npy"), tree_mask)
+    np.save(str(cache_path / "solar_panel_mask.npy"), seg_res["solar_mask"])
+    np.save(str(cache_path / "segmentation_map.npy"), seg_res["segmentation_map"])
+    print(f"       ✅ AI canopy heights & semantic masks cached.")
 
     print("\n[4/4] Testing scenario simulations (Tree +20%, Solar +30%)...")
     res = api.simulate(tree_pct=20.0, solar_pct=30.0, cool_roof_albedo=0.05)
