@@ -4,10 +4,10 @@ Run:
     streamlit run app.py
 """
 import streamlit as st
+import streamlit.components.v1 as components
 import numpy as np
 import folium
 from folium.plugins import HeatMap
-from streamlit_folium import st_folium
 import branca.colormap as cm
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
@@ -93,9 +93,9 @@ def main():
         st.subheader("🗺️ Map Overlays")
         basemap_style = st.selectbox(
             "Basemap Style",
-            ["Satellite (Esri World Imagery)", "OpenStreetMap (Standard)", "CartoDB Positron"],
+            ["Satellite (Esri World Imagery)", "OpenStreetMap (Standard)", "Topographic (OpenTopoMap)"],
             index=0,
-            help="Choose basemap tile provider. Satellite and OpenStreetMap require no API key.",
+            help="Choose basemap tile provider. Completely free, no API key required.",
         )
         show_heatmap = st.checkbox("Show Microclimate Heatmap", value=True)
         heatmap_mode = st.radio("Heatmap View", ["After Intervention", "Baseline (Observed)", "Cooling Difference (Delta)"], index=0)
@@ -165,11 +165,12 @@ def main():
                     attr="Esri World Imagery",
                     control_scale=True,
                 )
-            elif basemap_style == "CartoDB Positron":
+            elif basemap_style == "Topographic (OpenTopoMap)":
                 m = folium.Map(
                     location=[center_lat, center_lon],
                     zoom_start=14,
-                    tiles="CartoDB positron",
+                    tiles="https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
+                    attr="OpenTopoMap",
                     control_scale=True,
                 )
             else:
@@ -253,7 +254,8 @@ def main():
                         tooltip=f"Roof: {b.get('roof_area_m2', 0):.0f} m² | Potential: {kw:.1f} kWp",
                     ).add_to(m)
 
-            st_folium(m, width="100%", height=620, returned_objects=[])
+            # Render map smoothly without triggering rerun cycles on scroll
+            components.html(m._repr_html_(), height=620)
 
         with col_info:
             st.markdown("### 🔍 Live Site Intelligence")
@@ -282,6 +284,7 @@ def main():
             ax.legend()
             ax.set_title("Shift Toward Cooler Microclimate")
             st.pyplot(fig)
+            plt.close(fig)
 
         with c2:
             st.markdown("#### Key Takeaways for City Planners")
